@@ -95,8 +95,8 @@ class BuscaProduto():
             return self.df_lista_produtos
 
         self.df_lista_produtos.drop_duplicates(inplace=True)
-        self.df_lista_produtos['data_hora'] = self.df_lista_produtos['data_hora'].apply(pd.to_datetime)
-        self.df_lista_produtos.sort_values(by=['data_hora'], inplace=True, ascending=False)
+        self.df_lista_produtos['data_publicacao'] = self.df_lista_produtos['data_publicacao'].apply(pd.to_datetime) 
+        self.df_lista_produtos.sort_values(by=['data_publicacao'], inplace=True, ascending=False)
         self.df_lista_produtos = self.df_lista_produtos.reset_index(drop=True)
 
         logging.info(f"{len(self.df_lista_produtos)} resultados sem filtro")
@@ -154,7 +154,7 @@ class BuscaProduto():
                 except TypeError:
                     logging.debug(f"Título não encontrado na página: \n{produto}\n\n")
 
-                executor.submit(self.append_prod_list, url_produto) # Executa paralelizado
+                executor.submit(self.append_prod_list, url_produto,pagina) # Executa paralelizado
                 # self.append_prod_list(url_produto) # Executa não paralelizado
         return True
 
@@ -190,11 +190,11 @@ class BuscaProduto():
         logging.debug(f"Título não confere: {perm_regex} -> {str2_fmt}")                    
         return False
     
-    def append_prod_list(self, url_produto:str):
-        self.lista_produtos.append(self.OLX_pesquisa_prod(url_produto))
+    def append_prod_list(self, url_produto:str, pagina:str|int):
+        self.lista_produtos.append(self.OLX_pesquisa_prod(url_produto,pagina))
 
     @staticmethod
-    def OLX_pesquisa_prod(url_produto:str):
+    def OLX_pesquisa_prod(url_produto:str, pagina:str|int):
         try:
             headers = {'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/55.0.2883.87 Safari/537.36'}
             page_produto = requests.get(url_produto, headers=headers)
@@ -233,13 +233,15 @@ class BuscaProduto():
             preco_post = float(preco_post.replace('.','')) if preco_post else 0.0
             estado_post = url_produto[8:10].upper()
 
-            dic_produtos = {'data_hora': data_hora_post,
+            dic_produtos = {'pagina': pagina,
                             'titulo': titulo_anuncio,
                             'preco': preco_post,
                             'estado': estado_post,
                             'cidade': cidade_post,
                             'bairro': bairro_post,
-                            'url': url_produto, }
+                            'url': url_produto,
+                            'data_publicacao': data_hora_post,
+                            'data_pesquisa': datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             logging.debug(dic_produtos)
             # self.lista_produtos.append(dic_produtos)
             return dic_produtos
@@ -259,7 +261,7 @@ class BuscaProduto():
             if intervalo:
                 self.intervalo_timedelta, self.intervalo_tipo_str = self.format_intervalo(intervalo)
                 logging.info(f"Filtrando datas maiores que: {(today-self.intervalo_timedelta).strftime('%d/%m/%Y %H:%M:%S')} ({self.intervalo_tipo_str} atrás)")
-                time_in_seconds = (self.df_lista_produtos['data_hora'] - pd.Timestamp("1970-01-01")) // pd.Timedelta('1s') + 60*60*3 # GMT -3:00h
+                time_in_seconds = (self.df_lista_produtos['data_publicacao'] - pd.Timestamp("1970-01-01")) // pd.Timedelta('1s') + 60*60*3 # GMT -3:00h
                 self.df_lista_produtos = self.df_lista_produtos.loc[time_in_seconds >= int((today-self.intervalo_timedelta).timestamp())]
             
             self.df_lista_produtos.reset_index(drop=True, inplace=True)
@@ -326,16 +328,21 @@ def get_dict_from_xls(xls_path) -> List[Dict[str,str]]:
     # df = df.replace('\xa0', ' ')
     return list(df.to_dict(orient = "records"))
 
-def busca_produto_e_envia_email(dado:Dict[str,Any]) -> Tuple[str, pd.DataFrame]:
+def busca_produto_e_salva_CSV(dado:Dict[str,Any]) -> Tuple[str, pd.DataFrame]:
     busca = BuscaProduto(**dado)
     lista_produtos = busca.OLX()
+    logging.info("LISTA SEM FILTRO\n")
+    logging.info(lista_produtos)
+    lista_produtos.to_csv("./resultado.csv", index=False , encoding = 'utf-8')
     # logging.info(lista_produtos.to_dict(orient = "records"))
     preco_max = str(dado['preco_max']).replace('.','')
     preco_max = float(preco_max) if preco_max != '' else None
     df_lista_filtrada = busca.filtrar(preco_max = preco_max, intervalo = dado['intervalo'])
     if not df_lista_filtrada.empty:
         logging.info(f"{len(df_lista_filtrada)} resultados com filtro:\n{df_lista_filtrada}")
-        busca.EnviarEmail(os.path.join(os.path.dirname(__file__),'cred.json'), email_para = dado['email'])
+        logging.info("LISTA FILTRADA:\n")
+        logging.info(df_lista_filtrada)
+        df_lista_filtrada.to_csv("./resultado-fitlrado.csv", index=False , encoding = 'utf-8')
     else:
         logging.info('Nenhum resultado no filtro!')
         pass
@@ -396,11 +403,11 @@ def get_params_produtos(origem:str) -> List[Dict[str,str]]:
 def busca_OLX(products_params : List[Dict[str,str]], paralelizar = False):
     logging.info(f'Iniciando busca...')
     if paralelizar:
-        run_func_in_parallel_Process(busca_produto_e_envia_email, products_params)
-        # run_func_in_parallel_ThreadPool(busca_produto_e_envia_email, products_params)
+        run_func_in_parallel_Process(busca_produto_e_salva_CSV, products_params)
+        # run_func_in_parallel_ThreadPool(busca_produto_e_salva_CSV, products_params)
     else:
         for params in products_params:
-            busca_produto_e_envia_email(params)
+            busca_produto_e_salva_CSV(params)
 
     logging.info("Finalizou todas as pesquisas!")
 
