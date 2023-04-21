@@ -1,4 +1,4 @@
-# OLX-Web-Scrapping by Túlio Farias
+# OLX-Web-Scrapping - Túlio Farias
 
 Busca automatizada de produtos no site da OLX usando planilha para cadastro de produtos/filtros
 
